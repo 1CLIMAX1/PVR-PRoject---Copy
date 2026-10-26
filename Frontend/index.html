@@ -718,7 +718,7 @@
     const t0 = Date.now();
 
     try {
-      const res = await fetch('https://pvr-project-copy.onrender.com', {
+      const res = await fetch('https://pvr-project-copy.onrender.com/recommend', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ movie })
