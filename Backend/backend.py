@@ -35,6 +35,10 @@ with open(os.path.join(BASE_DIR, "neighbours_data.pkl"), "rb") as f:
 NEIGHBOURS_OFFSETS = neighbours_data["offsets"]
 NEIGHBOURS_FLAT = neighbours_data["flat"]
 
+GENRE_MASKS = movies_data["genre_masks"]
+GENRES = movies_data["genres"]
+PAGE_SIZE = 5
+
 print(f"Ready — {len(TITLES)} movies indexed.", flush=True)
 
 
@@ -83,6 +87,63 @@ def get_movie_details(title: str) -> dict:
         }
     except Exception:
         return _default
+
+@lru_cache(maxsize=64)
+def _search(q, genre, sort):
+    t = q.strip().lower()
+    gbit = 1 << GENRES.index(genre) if genre in GENRES else 0
+    hits = []
+    for i in range(len(TITLES)):
+        if gbit and not GENRE_MASKS[i] & gbit:
+            continue
+        if sort == "rating" and VOTES[i] < 1.0:   # z-score: above-average votes only
+            continue
+        rank = 0
+        if t:
+            tl = TITLES_LOWER[i]
+            if t not in tl:
+                continue
+            rank = 0 if tl == t else 1 if tl.startswith(t) else 2
+        hits.append((rank, i))
+
+    keys = {
+        "rating": lambda h: (-RATINGS[h[1]], -VOTES[h[1]]),
+        "title":  lambda h: TITLES_LOWER[h[1]],
+    }
+    hits.sort(key=keys.get(sort, lambda h: (h[0], -VOTES[h[1]])))
+    return [i for _, i in hits]
+
+
+def _genres_of(i):
+    m = GENRE_MASKS[i]
+    return [g for b, g in enumerate(GENRES) if m >> b & 1]
+
+
+@app.route("/genres")
+def genres():
+    return jsonify(GENRES)
+
+
+@app.route("/details")
+def details():
+    return jsonify(get_movie_details(request.args.get("title", "")))
+
+@app.route("/search")
+
+def search():
+    a = request.args
+    try:
+        page = max(1, int(a.get("page", 1)))
+    except ValueError:
+        page = 1
+    ids = _search(a.get("q", ""), a.get("genre", ""), a.get("sort", "popularity"))
+    chunk = ids[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
+    return jsonify({
+        "total": len(ids),
+        "page": page,
+        "pages": max(1, -(-len(ids) // PAGE_SIZE)),
+        "results": [{"title": TITLES[i], "genres": _genres_of(i)} for i in chunk],
+    })
 
 
 # ─── Title matching ───────────────────────────────────────────────────────────
@@ -162,6 +223,24 @@ def recommend_api():
         return jsonify({"error": "Server error", "details": str(e)}), 500
 
     return jsonify(results)
+
+@lru_cache(maxsize=256)
+def get_full_details(title: str) -> dict:
+    if not API_KEY:
+        return {"Response": "False"}
+    try:
+        return requests.get(
+            "http://www.omdbapi.com/",
+            params={"t": title, "plot": "full", "apikey": API_KEY},
+            timeout=5,
+        ).json()
+    except Exception:
+        return {"Response": "False"}
+
+
+@app.route("/movie")
+def movie():
+    return jsonify(get_full_details(request.args.get("title", "")))
 
 
 if __name__ == "__main__":

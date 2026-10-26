@@ -16,22 +16,34 @@ def build_compact_movies():
     with open(MOVIES_FILE, "rb") as f:
         df = pickle.load(f)
 
-    titles = df["primaryTitle"].astype(str).tolist()
-    titles_lower = [title.strip().lower() for title in titles]
+    titles = df["primaryTitle"].fillna("").map(str).tolist()
+    titles_lower = [t.strip().lower() for t in titles]
     votes = array("f", df["numVotes"].fillna(0).astype("float32").tolist())
     ratings = array("f", df["averageRating"].fillna(0).astype("float32").tolist())
+
+    # genres are the first word of combined_features, e.g. "Drama,Romance"
+    genre_lists = [
+        [g for g in str(s).split(" ", 1)[0].split(",") if g and g != "\\N"]
+        for s in df["combined_features"].fillna("")
+    ]
+    all_genres = sorted({g for gl in genre_lists for g in gl})
+    assert len(all_genres) <= 32, all_genres
+    gid = {g: i for i, g in enumerate(all_genres)}
+    masks = array("I", [sum(1 << gid[g] for g in gl) for gl in genre_lists])
 
     movies_data = {
         "titles": titles,
         "titles_lower": titles_lower,
         "votes": votes,
         "ratings": ratings,
+        "genre_masks": masks,
+        "genres": all_genres,
     }
 
     with open(COMPACT_MOVIES_FILE, "wb") as f:
         pickle.dump(movies_data, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    print(f"Wrote compact movies data: {COMPACT_MOVIES_FILE}")
+    print(f"Wrote {COMPACT_MOVIES_FILE} ({len(all_genres)} genres: {all_genres})")
 
 
 def build_compact_neighbours():
